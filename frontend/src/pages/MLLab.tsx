@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BrainCircuit, Cpu, Network, Calendar as CalendarIcon, ArrowRight, Lightbulb, Target } from 'lucide-react';
+import { BrainCircuit, Cpu, Network, Calendar as CalendarIcon, ArrowRight, Lightbulb, Target, Combine } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ScatterChart, Scatter, ComposedChart, Line } from 'recharts';
 
 export default function MLLab() {
@@ -12,7 +12,7 @@ export default function MLLab() {
     setLoading(true);
     setResults(null);
     try {
-      const response = await fetch('http://10.47.25.234:8020/ml/optimize', {
+      const response = await fetch('http://127.0.0.1:8020/ml/optimize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target_date: targetDate, model_type: selectedModel })
@@ -30,7 +30,7 @@ export default function MLLab() {
   return (
     <div className="p-6 max-w-[1400px] mx-auto flex flex-col gap-6">
       
-      {/* HEADER E FILTRO */}
+      {/* HEADER */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col lg:flex-row justify-between items-center gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
@@ -45,33 +45,31 @@ export default function MLLab() {
         </div>
       </div>
 
-      {/* SELEÇÃO DE MODELOS */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <button 
-          onClick={() => setSelectedModel('heijunka')}
-          className={`p-4 rounded-xl border-2 text-left transition-all ${selectedModel === 'heijunka' ? 'border-indigo-600 bg-indigo-50 shadow-md' : 'border-slate-200 bg-white hover:border-indigo-300'}`}
-        >
+      {/* SELEÇÃO DE MODELOS (Agora em Grid de 4) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <button onClick={() => setSelectedModel('heijunka')} className={`p-4 rounded-xl border-2 text-left transition-all ${selectedModel === 'heijunka' ? 'border-indigo-600 bg-indigo-50 shadow-md' : 'border-slate-200 bg-white hover:border-indigo-300'}`}>
           <Network className={`${selectedModel === 'heijunka' ? 'text-indigo-600' : 'text-slate-400'} mb-2`} size={28}/>
           <h3 className="font-bold text-slate-800">Heijunka Global</h3>
-          <p className="text-xs text-slate-500 mt-1">Matemática: Balanceamento de mix entre os 3 turnos operacionais.</p>
+          <p className="text-xs text-slate-500 mt-1">Matemática: Balanceamento de mix entre turnos.</p>
         </button>
 
-        <button 
-          onClick={() => setSelectedModel('saturacao')}
-          className={`p-4 rounded-xl border-2 text-left transition-all ${selectedModel === 'saturacao' ? 'border-indigo-600 bg-indigo-50 shadow-md' : 'border-slate-200 bg-white hover:border-indigo-300'}`}
-        >
+        <button onClick={() => setSelectedModel('saturacao')} className={`p-4 rounded-xl border-2 text-left transition-all ${selectedModel === 'saturacao' ? 'border-indigo-600 bg-indigo-50 shadow-md' : 'border-slate-200 bg-white hover:border-indigo-300'}`}>
           <Cpu className={`${selectedModel === 'saturacao' ? 'text-indigo-600' : 'text-slate-400'} mb-2`} size={28}/>
-          <h3 className="font-bold text-slate-800">Limiar de Saturação</h3>
-          <p className="text-xs text-slate-500 mt-1">Regressão Polinomial: Descubra o limite % exato de Varejo por hora.</p>
+          <h3 className="font-bold text-slate-800">Limiar Saturação</h3>
+          <p className="text-xs text-slate-500 mt-1">Regressão: O limite exato de Varejo por hora.</p>
         </button>
 
-        <button 
-          onClick={() => setSelectedModel('cluster')}
-          className={`p-4 rounded-xl border-2 text-left transition-all ${selectedModel === 'cluster' ? 'border-indigo-600 bg-indigo-50 shadow-md' : 'border-slate-200 bg-white hover:border-indigo-300'}`}
-        >
+        <button onClick={() => setSelectedModel('cluster')} className={`p-4 rounded-xl border-2 text-left transition-all ${selectedModel === 'cluster' ? 'border-indigo-600 bg-indigo-50 shadow-md' : 'border-slate-200 bg-white hover:border-indigo-300'}`}>
           <Target className={`${selectedModel === 'cluster' ? 'text-indigo-600' : 'text-slate-400'} mb-2`} size={28}/>
           <h3 className="font-bold text-slate-800">Cluster de Ouro</h3>
-          <p className="text-xs text-slate-500 mt-1">K-Means: Agrupe e compare este dia com os dias de alta performance.</p>
+          <p className="text-xs text-slate-500 mt-1">K-Means: Agrupe dias de alta performance.</p>
+        </button>
+
+        {/* NOVO BOTÃO DE AFINIDADE */}
+        <button onClick={() => setSelectedModel('afinidade')} className={`p-4 rounded-xl border-2 text-left transition-all ${selectedModel === 'afinidade' ? 'border-indigo-600 bg-indigo-50 shadow-md' : 'border-slate-200 bg-white hover:border-indigo-300'}`}>
+          <Combine className={`${selectedModel === 'afinidade' ? 'text-indigo-600' : 'text-slate-400'} mb-2`} size={28}/>
+          <h3 className="font-bold text-slate-800">Otimizar Slotting</h3>
+          <p className="text-xs text-slate-500 mt-1">Apriori: Encontre produtos que saem juntos.</p>
         </button>
       </div>
 
@@ -172,6 +170,48 @@ export default function MLLab() {
                     <Bar dataKey="Cluster de Ouro" fill="#fbbf24" radius={[0, 4, 4, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+          {/* BLOCO 4: AFINIDADE (MARKET BASKET) */}
+          {results.model === 'afinidade' && (
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <div className="flex justify-between items-end mb-6">
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">Top 5 Casais de Slotting</h3>
+                  <p className="text-sm text-slate-500">Categorias que costumam sair na mesma caixa de expedição.</p>
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-black text-indigo-600">{results.total_multi.toLocaleString('pt-BR')}</div>
+                  <div className="text-xs text-slate-400 font-bold uppercase tracking-wide">Caixas Analisadas (Multi-Item)</div>
+                </div>
+              </div>
+
+              <div className="grid gap-4">
+                {results.pairs_data.map((pair: any, index: number) => (
+                  <div key={index} className="flex flex-col md:flex-row items-center justify-between bg-slate-50 border border-slate-200 p-4 rounded-xl gap-4 hover:border-indigo-300 transition-colors">
+                    
+                    <div className="flex-1 bg-white p-3 rounded-lg border border-slate-100 shadow-sm w-full md:w-auto text-center">
+                      <div className="text-xs font-bold text-slate-400 uppercase">Estação {pair.estacao1}</div>
+                      <div className="text-lg font-bold text-slate-700">{pair.cat1}</div>
+                    </div>
+
+                    <div className="flex flex-col items-center px-4">
+                      <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-sm font-black mb-1">
+                        {pair.pct}% das caixas
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                        {pair.freq} Ocorrências
+                      </div>
+                    </div>
+
+                    <div className="flex-1 bg-white p-3 rounded-lg border border-slate-100 shadow-sm w-full md:w-auto text-center">
+                      <div className="text-xs font-bold text-slate-400 uppercase">Estação {pair.estacao2}</div>
+                      <div className="text-lg font-bold text-slate-700">{pair.cat2}</div>
+                    </div>
+
+                  </div>
+                ))}
               </div>
             </div>
           )}
