@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+from itertools import combinations
+from collections import Counter
 
 router = APIRouter()
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -15,6 +17,7 @@ DB_PATH = os.path.join(BASE_DIR, 'simulador.db')
 class MLParams(BaseModel):
     target_date: str
     model_type: str
+    selected_shift: str = "Todos"
 
 def get_turno(hora):
     if 6 <= hora < 14: return 'Turno 1'
@@ -33,6 +36,7 @@ def optimize_production(params: MLParams):
         WHERE data_only >= '{limit_date_str}' AND data_only <= '{params.target_date}'
     """
     df_hist = pd.read_sql_query(query, conn)
+    df_hist['turno'] = df_hist['hour'].apply(get_turno)
     conn.close()
 
     if df_hist.empty:
@@ -140,51 +144,138 @@ def optimize_production(params: MLParams):
         }
 
     # ==========================================
-    # MODELO 3: CLUSTER DE OURO (K-Means)
+    # MODELO 3: CLUSTER DE OURO (REMODELADO POR TURNO)
     # ==========================================
     elif params.model_type == 'cluster':
-        # Agrupa os 90 dias por dia
-        daily = df_hist.groupby('data_only').agg(
+        insight_msg = "Análise concluída. Compare os indicadores abaixo com a média histórica."
+        # Agrupamos por DIA e TURNO para uma análise granular
+        group_cols = ['data_only', 'turno']
+        daily = df_hist.groupby(group_cols).agg(
             pecas_total=('pecas', 'sum'),
+            ucs_total=('uc', 'count'),
             pecas_var=('pecas', lambda x: x[df_hist.loc[x.index, 'tipo'] == 'Varejo'].sum())
         ).reset_index()
         
         daily['pct_var'] = np.where(daily['pecas_total'] > 0, (daily['pecas_var'] / daily['pecas_total']) * 100, 0)
+        daily['densidade'] = daily['pecas_total'] / daily['ucs_total'] # Peças por Caixa
         
-        if len(daily) < 10:
-            return {"error": "É necessário mais histórico para agrupar os dias em Clusters."}
+        # Filtro de Turno para o treinamento do Cluster
+        if params.selected_shift != "Todos":
+            daily_train = daily[daily['turno'] == params.selected_shift].copy()
+        else:
+            daily_train = daily.copy()
 
-        # K-Means clustering (Baixa, Média, Alta Performance)
-        features = daily[['pecas_total', 'pct_var']]
+        if len(daily_train) < 5:
+            return {"error": "Dados insuficientes para este turno específico."}
+
+        # K-Means considerando Volume e Densidade (Métrica de refutação)
+        features = daily_train[['pecas_total', 'densidade', 'pct_var']]
         scaler = StandardScaler()
         features_scaled = scaler.fit_transform(features)
         
         kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
-        daily['cluster'] = kmeans.fit_predict(features_scaled)
+        daily_train['cluster'] = kmeans.fit_predict(features_scaled)
         
-        # Encontra o "Cluster de Ouro" (O que tem a maior média de peças)
-        cluster_means = daily.groupby('cluster')['pecas_total'].mean()
-        golden_cluster_id = cluster_means.idxmax()
+        # Cluster de Ouro (Maior média de peças)
+        golden_cluster_id = daily_train.groupby('cluster')['pecas_total'].mean().idxmax()
+        golden_data = daily_train[daily_train['cluster'] == golden_cluster_id]
         
-        golden_data = daily[daily['cluster'] == golden_cluster_id]
-        golden_mean_total = golden_data['pecas_total'].mean()
-        golden_mean_pct = golden_data['pct_var'].mean()
+        # Dados do dia alvo
+        target_stats = daily[(daily['data_only'] == target_date_obj) & 
+                             (daily['turno'] == (params.selected_shift if params.selected_shift != "Todos" else "Turno 3"))]
         
-        # Pega os dados do dia alvo
-        target_stats = daily[daily['data_only'] == target_date_obj]
-        target_total = target_stats['pecas_total'].values[0] if not target_stats.empty else 0
-        target_pct = target_stats['pct_var'].values[0] if not target_stats.empty else 0
+        if target_stats.empty:
+            return {"error": "Dia/Turno não encontrado."}
 
-        diff_total = target_total - golden_mean_total
-        
-        insight_msg = f"Comparando {params.target_date} com o 'Cluster de Ouro' (Top Performance histórico): O dia selecionado ficou {abs(diff_total):,.0f} peças {'abaixo' if diff_total < 0 else 'acima'} da média dos nossos melhores dias. Os dias de ouro operam com uma concentração média de {golden_mean_pct:.1f}% de Varejo."
-
+        # Comparativo para o gráfico
         comparison_data = [
-            {"metrica": "Volume Total (Peças)", "Dia Selecionado": int(target_total), "Cluster de Ouro": int(golden_mean_total)},
-            {"metrica": "Concentração Varejo (%)", "Dia Selecionado": round(target_pct, 1), "Cluster de Ouro": round(golden_mean_pct, 1)}
+            {
+                "metrica": "Vol. Peças", 
+                "Dia Selecionado": int(target_stats['pecas_total'].iloc[0]), 
+                "Cluster de Ouro": int(golden_data['pecas_total'].mean())
+            },
+            {
+                "metrica": "Densidade (Pç/Cx)", 
+                "Dia Selecionado": round(target_stats['densidade'].iloc[0], 1), 
+                "Cluster de Ouro": round(golden_data['densidade'].mean(), 1)
+            },
+            {
+                "metrica": "Mix Varejo (%)", 
+                "Dia Selecionado": round(target_stats['pct_var'].iloc[0], 1), 
+                "Cluster de Ouro": round(golden_data['pct_var'].mean(), 1)
+            }
         ]
 
         return {
-            "model": "cluster", "insight": insight_msg,
+            "model": "cluster", 
+            "insight": insight_msg,
             "comparison_data": comparison_data
+        }
+    
+    # ==========================================
+    # MODELO 4: OTIMIZADOR DE SLOTTING (Afinidade)
+    # ==========================================
+    elif params.model_type == 'afinidade':
+        conn = sqlite3.connect(DB_PATH)
+        # Puxa todas as tarefas das caixas induzidas neste dia
+        query_t = f"""
+            SELECT t.uc, t.catergoria_material, t.estacao 
+            FROM tarefas t
+            JOIN inducao_start i ON t.uc = i.uc
+            WHERE i.data_only = '{params.target_date}'
+              AND t.catergoria_material IS NOT NULL 
+              AND t.catergoria_material != 'nan'
+              AND t.catergoria_material != ''
+        """
+        df_t = pd.read_sql_query(query_t, conn)
+        
+        if df_t.empty:
+            return {"error": "Sem dados de categorias para este dia. O Slotting falhou."}
+            
+        # Descobre a Estação principal onde cada categoria mora fisicamente
+        cat_estacao = df_t.groupby('catergoria_material')['estacao'].agg(lambda x: x.mode()[0] if not x.mode().empty else 'N/A').to_dict()
+        
+        # Remove itens repetidos da mesma categoria na mesma caixa
+        df_t = df_t.drop_duplicates(subset=['uc', 'catergoria_material'])
+        
+        # Agrupa as categorias por caixa (A Cesta de Compras)
+        baskets = df_t.groupby('uc')['catergoria_material'].apply(list).tolist()
+        
+        pair_counter = Counter()
+        multi_item_boxes = 0
+        
+        # Algoritmo de cruzamento (Acha os casais que saem juntos)
+        for basket in baskets:
+            if len(basket) > 1:
+                multi_item_boxes += 1
+                # Ordena para garantir que (A,B) seja igual a (B,A)
+                for pair in combinations(sorted(basket), 2):
+                    pair_counter[pair] += 1
+                    
+        if multi_item_boxes == 0:
+            return {"error": "Nenhuma caixa com múltiplas categorias encontrada neste dia."}
+            
+        top_pairs = pair_counter.most_common(5)
+        
+        pairs_data = []
+        for pair, count in top_pairs:
+            cat1, cat2 = pair
+            pct = round((count / multi_item_boxes) * 100, 1)
+            pairs_data.append({
+                "cat1": str(cat1).strip()[:20], "estacao1": str(cat_estacao.get(cat1, 'N/A')).strip(),
+                "cat2": str(cat2).strip()[:20], "estacao2": str(cat_estacao.get(cat2, 'N/A')).strip(),
+                "freq": count, "pct": pct
+            })
+            
+        best = pairs_data[0] if pairs_data else None
+        if best:
+            insight_msg = f"🚨 Oportunidade de Slotting: {best['pct']}% de todas as caixas que continham mais de um item precisaram parar para pegar '{best['cat1']}' e '{best['cat2']}'. Verifique a distância física entre as estações [{best['estacao1']}] e [{best['estacao2']}]. Aproximá-las reduzirá drasticamente a viagem morta da caixa!"
+        else:
+            insight_msg = "Não foram encontradas afinidades fortes. O mix deste dia foi muito pulverizado."
+
+        return {
+            "model": "afinidade",
+            "insight": insight_msg,
+            "pairs_data": pairs_data,
+            "total_multi": multi_item_boxes
         }
